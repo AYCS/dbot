@@ -203,6 +203,10 @@ private:
     // PBO for copying results to CPU for debugging
     GLuint result_buffer_;
 
+    // buffer for atomic counters
+    GLuint atomic_counters_buffer_;
+    std::vector<int> pixel_counter_;
+
     // custom framebuffer and its textures for depth (for z-testing) and color (which also represents depth in our case)
     GLuint framebuffer_;
     GLuint framebuffer_texture_for_all_poses_;

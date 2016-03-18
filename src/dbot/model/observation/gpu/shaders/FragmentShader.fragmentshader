@@ -1,8 +1,10 @@
 #version 330 core
+//layout (binding = 1, offset = 0) uniform atomic_uint nr_pixels;
 
 in float depth;
 layout (location = 0) out float log_likelihood;
 
 void main() {
    log_likelihood = -depth;
+   //if (log_likelihood != 0) atomicCounterIncrement(nr_pixels);
 }

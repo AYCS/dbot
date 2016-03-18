@@ -27,16 +27,18 @@ namespace dbot
 DefaultShaderProvider::DefaultShaderProvider()
     : SimpleShaderProvider(
           /* fragment shader */
-          "#version 330 core                                                \n"
+          "#version 430 core                                                \n"
+          "layout (binding = 0, offset = 0) uniform atomic_uint nr_pixels;  \n"
           "                                                                 \n"
           "in float depth;                                                  \n"
           "layout (location = 0) out float log_likelihood;                  \n"
           "                                                                 \n"
           "void main() {                                                    \n"
           "   log_likelihood = -depth;                                      \n"
+          "   atomicCounterIncrement(nr_pixels);   \n"
           "}                                                                \n",
           /* vertex shader */
-          "#version 330                                                     \n"
+          "#version 430                                                     \n"
           "                                                                 \n"
           " // tell OpenGL which buffer corresponds to which input          \n"
           "layout(location = 0) in vec3 vertexPosition_modelspace;          \n"

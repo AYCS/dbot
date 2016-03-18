@@ -54,7 +54,7 @@ ObjectRasterizer::ObjectRasterizer(const std::vector<std::vector<Eigen::Vector3f
        None
     };
     int context_attribs[] = {
-           GLX_CONTEXT_MAJOR_VERSION_ARB, 3,
+           GLX_CONTEXT_MAJOR_VERSION_ARB, 4,
            GLX_CONTEXT_MINOR_VERSION_ARB, 2,
            None
     };
@@ -229,6 +229,13 @@ ObjectRasterizer::ObjectRasterizer(const std::vector<std::vector<Eigen::Vector3f
     // create PBO that will be used for copying the depth values to the CPU, if requested
     glGenBuffers(1, &result_buffer_);
 
+    // ======================= CREATE BUFFER FOR COUNTERS ======================= //
+
+    glGenBuffers(1, &atomic_counters_buffer_);
+
+    glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomic_counters_buffer_);
+    glBufferData(GL_ATOMIC_COUNTER_BUFFER, sizeof(GLuint), NULL, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, 0);
 
     // ======================= CREATE FRAMEBUFFER OBJECT AND ITS TEXTURES ======================= //
 
@@ -292,6 +299,25 @@ ObjectRasterizer::ObjectRasterizer(const std::vector<std::vector<Eigen::Vector3f
 
     check_GL_errors("Generating time queries");
 #endif
+
+// TODO DELETE =================
+
+    GLint counter_buffers, counter_buffer_size, vertex_counters, fragment_counters,
+            fragment_buffers;
+    glGetIntegerv(GL_MAX_ATOMIC_COUNTER_BUFFER_BINDINGS, &counter_buffers);
+    glGetIntegerv(GL_MAX_ATOMIC_COUNTER_BUFFER_SIZE, &counter_buffer_size);
+    glGetIntegerv(GL_MAX_VERTEX_ATOMIC_COUNTER_BUFFERS, &vertex_counters);
+    glGetIntegerv(GL_MAX_FRAGMENT_ATOMIC_COUNTERS, &fragment_counters);
+    glGetIntegerv(GL_MAX_FRAGMENT_ATOMIC_COUNTER_BUFFERS, &fragment_buffers);
+
+    std::cout << "counter buffers: " << counter_buffers
+              << ", counter buffer size: " << counter_buffer_size
+              << ", vertex counters: " << vertex_counters
+              << ", fragment counters: " << fragment_counters
+              << ", fragment buffers: " << fragment_buffers << std::endl;
+
+    // ====================================
+
 }
 
 
@@ -353,6 +379,17 @@ void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > s
     for (int i = 0; i < nr_poses_per_col ; i++) {
         for (int j = 0; j < max_nr_poses_per_row_ && i * max_nr_poses_per_row_ + j < nr_poses_; j++) {
 
+            int pose_nr = max_nr_poses_per_row_ * i + j;
+
+            // reset atomic counter
+            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomic_counters_buffer_);
+            GLuint a[1] = {0};
+            glBufferSubData(GL_ATOMIC_COUNTER_BUFFER, 0 , sizeof(GLuint), a);
+            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, 0);
+
+            glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER, 0, atomic_counters_buffer_);
+
+
             glViewport(j * nr_cols_, (nr_poses_per_col - 1 - i) * nr_rows_, nr_cols_, nr_rows_);
             #ifdef DEBUG
                 check_GL_errors("setting the viewport");
@@ -360,7 +397,7 @@ void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > s
             for (size_t k = 0; k < object_numbers_.size(); k++) {
                 int index = object_numbers_[k];
 
-                model_view_matrix = view_matrix_ * states[max_nr_poses_per_row_ * i + j][index];
+                model_view_matrix = view_matrix_ * states[pose_nr][index];
                 glUniformMatrix4fv(model_view_matrix_ID_, 1, GL_FALSE, model_view_matrix.data());
 
                 glDrawElements(GL_TRIANGLES, indices_per_object_[index], GL_UNSIGNED_INT, (void*) (start_position_[index] * sizeof(uint)));
@@ -368,6 +405,30 @@ void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > s
                     check_GL_errors("render call");
                 #endif
             }
+
+
+            GLuint *userCounters;
+            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomic_counters_buffer_);
+            // again we map the buffer to userCounters, but this time for read-only access
+            userCounters = (GLuint*)glMapBufferRange(GL_ATOMIC_COUNTER_BUFFER,
+                                                     0,
+                                                     sizeof(GLuint) ,
+                                                     GL_MAP_READ_BIT
+                                                    );
+            // copy the values to other variables because...
+            int test = userCounters[0];
+            std::cout << "atomic counter for pose " << pose_nr << ": " << test << std::endl;
+
+            glUnmapBuffer(GL_ATOMIC_COUNTER_BUFFER);
+
+//            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomic_counters_buffer_);
+//            glGetBufferSubData(GL_ATOMIC_COUNTER_BUFFER, 0, sizeof(GLuint), &pixel_counter_[pose_nr]);
+//            int test = pixel_counter_[pose_nr];
+//            std::cout << "atomic counter for pose " << pose_nr << ": " << test << std::endl;
+//            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, 0);
+
+
+
         }
     }
 
@@ -393,7 +454,6 @@ void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > s
     glEndQuery(GL_TIME_ELAPSED);
     store_time_measurements();
 #endif
-
 
 }
 
@@ -562,6 +622,9 @@ void ObjectRasterizer::reallocate_buffers() {
     // the NULL means this buffer is uninitialized, since I only want to copy values back to the CPU that will be written by the GPU
     glBufferData(GL_PIXEL_PACK_BUFFER, max_nr_poses_per_row_* nr_cols_ * max_nr_poses_per_column_ * nr_rows_ *  sizeof(GLfloat), NULL, GL_STREAM_READ);
     glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
+    // reallocate space for pixel counters
+    pixel_counter_.resize(max_nr_poses_, 0);
 
     // ======================= DETACH TEXTURES FROM FRAMEBUFFER ======================= //
 
