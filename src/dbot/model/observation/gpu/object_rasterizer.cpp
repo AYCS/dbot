@@ -24,6 +24,7 @@
 #include <dbot/model/observation/gpu/shader.hpp>
 #include <dbot/model/observation/gpu/object_rasterizer.hpp>
 
+
 using namespace std;
 using namespace Eigen;
 
@@ -407,19 +408,19 @@ void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > s
             }
 
 
-            GLuint *userCounters;
-            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomic_counters_buffer_);
-            // again we map the buffer to userCounters, but this time for read-only access
-            userCounters = (GLuint*)glMapBufferRange(GL_ATOMIC_COUNTER_BUFFER,
-                                                     0,
-                                                     sizeof(GLuint) ,
-                                                     GL_MAP_READ_BIT
-                                                    );
-            // copy the values to other variables because...
-            int test = userCounters[0];
-            std::cout << "atomic counter for pose " << pose_nr << ": " << test << std::endl;
+//            GLuint *userCounters;
+//            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomic_counters_buffer_);
+//            // again we map the buffer to userCounters, but this time for read-only access
+//            userCounters = (GLuint*)glMapBufferRange(GL_ATOMIC_COUNTER_BUFFER,
+//                                                     0,
+//                                                     sizeof(GLuint) ,
+//                                                     GL_MAP_READ_BIT
+//                                                    );
+//            // copy the values to other variables because...
+//            int test = userCounters[0];
+////            std::cout << "atomic counter for pose " << pose_nr << ": " << test << std::endl;
 
-            glUnmapBuffer(GL_ATOMIC_COUNTER_BUFFER);
+//            glUnmapBuffer(GL_ATOMIC_COUNTER_BUFFER);
 
 //            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomic_counters_buffer_);
 //            glGetBufferSubData(GL_ATOMIC_COUNTER_BUFFER, 0, sizeof(GLuint), &pixel_counter_[pose_nr]);
@@ -529,9 +530,13 @@ vector<vector<float> > ObjectRasterizer::get_depth_values(int nr_poses) {
     GLfloat *pixel_depth = (GLfloat*) glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
 
 
+    // subdividing this array into an array per pose
+    vector<vector<float> > depth_image_per_pose (nr_poses, vector<float> (nr_rows_ * nr_cols_, 0));
+
     if (pixel_depth != (GLfloat*) NULL) {
         int current_nr_poses_per_col = (nr_poses / max_nr_poses_per_row_) + 1;
         int total_nr_pixels = nr_rows_ * nr_cols_ * max_nr_poses_per_row_ * current_nr_poses_per_col;
+        int test = total_nr_pixels / 16.0f;
         vector<float> depth_image(total_nr_pixels, numeric_limits<float>::max());
 
         int pixels_per_row = max_nr_poses_per_row_ * nr_cols_;
@@ -542,17 +547,15 @@ vector<vector<float> > ObjectRasterizer::get_depth_values(int nr_poses) {
         for (int row = 0; row < pixels_per_col; row++) {
             int inverted_row = highest_pixel_per_col - row;
 
-            for (int col = 0; (col < pixels_per_row) && (row * pixels_per_row  + col < total_nr_pixels); col++) {
+            for (int col = 0; (col < pixels_per_row) && (row * pixels_per_row  + col < test); col++) {
                 int pixel_index = row * pixels_per_row  + col;
 
-                depth_image[pixel_index] = pixel_depth[inverted_row * pixels_per_row + col];
+//                depth_image[pixel_index] = pixel_depth[inverted_row * pixels_per_row + col];
             }
         }
 
         glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
 
-        // subdividing this array into an array per pose
-        vector<vector<float> > depth_image_per_pose (nr_poses, vector<float> (nr_rows_ * nr_cols_, 0));
 
         for (int pose_y = 0; pose_y < max_nr_poses_per_column_; pose_y++) {
             for (int pose_x = 0; pose_x < max_nr_poses_per_row_ &&
@@ -572,7 +575,6 @@ vector<vector<float> > ObjectRasterizer::get_depth_values(int nr_poses) {
             }
         }
 
-        return depth_image_per_pose;
 
     } else {
         cout << "WARNING: Could not map Pixel Pack Buffer." << endl;
@@ -591,6 +593,9 @@ vector<vector<float> > ObjectRasterizer::get_depth_values(int nr_poses) {
     #ifdef DEBUG
         check_GL_errors("copying depth values to CPU");
     #endif
+
+
+    return depth_image_per_pose;
 }
 
 int ObjectRasterizer::get_max_texture_size() {

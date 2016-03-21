@@ -379,7 +379,8 @@ public:
         store_time(CONVERTING_STATE_FORMAT);
 #endif
 
-        opengl_->render(poses);
+        std::vector<std::vector<float> > depth_values;
+        opengl_->render(poses, depth_values);
 
 
 #ifdef PROFILING_ACTIVE
