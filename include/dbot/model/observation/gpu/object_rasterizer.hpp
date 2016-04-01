@@ -195,6 +195,7 @@ private:
     GLuint model_view_matrix_ID_;    // ID to which we pass the modelview matrix
     GLuint projection_matrix_ID_;    // ID to which we pass the projection matrix
 
+
     // VAO, VBO and element arrays are needed to store the object meshes
     GLuint vertex_array_;   // The vertex array contains the vertex and index buffers
     GLuint vertex_buffer_;    // contains the vertices of the object meshes passed in the constructor
@@ -202,6 +203,7 @@ private:
 
     // PBO for copying results to CPU for debugging
     GLuint result_buffer_;
+    std::vector<GLuint> pixel_count_;
 
     // buffer for atomic counters
     GLuint atomic_counters_buffer_;

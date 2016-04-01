@@ -381,6 +381,7 @@ void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > s
         for (int j = 0; j < max_nr_poses_per_row_ && i * max_nr_poses_per_row_ + j < nr_poses_; j++) {
 
             int pose_nr = max_nr_poses_per_row_ * i + j;
+            glBeginQuery(GL_SAMPLES_PASSED, pixel_count_[pose_nr]);
 
             // reset atomic counter
             glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomic_counters_buffer_);
@@ -408,28 +409,21 @@ void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > s
             }
 
 
-//            GLuint *userCounters;
-//            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomic_counters_buffer_);
-//            // again we map the buffer to userCounters, but this time for read-only access
-//            userCounters = (GLuint*)glMapBufferRange(GL_ATOMIC_COUNTER_BUFFER,
-//                                                     0,
-//                                                     sizeof(GLuint) ,
-//                                                     GL_MAP_READ_BIT
-//                                                    );
-//            // copy the values to other variables because...
-//            int test = userCounters[0];
-////            std::cout << "atomic counter for pose " << pose_nr << ": " << test << std::endl;
+            GLuint *userCounters;
+            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomic_counters_buffer_);
+            // again we map the buffer to userCounters, but this time for read-only access
+            userCounters = (GLuint*)glMapBufferRange(GL_ATOMIC_COUNTER_BUFFER,
+                                                     0,
+                                                     sizeof(GLuint) ,
+                                                     GL_MAP_READ_BIT
+                                                    );
+            // copy the values to other variables because...
+            int test = userCounters[0];
+            std::cout << "atomic counter for pose " << pose_nr << ": " << test << std::endl;
 
-//            glUnmapBuffer(GL_ATOMIC_COUNTER_BUFFER);
+            glUnmapBuffer(GL_ATOMIC_COUNTER_BUFFER);
 
-//            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomic_counters_buffer_);
-//            glGetBufferSubData(GL_ATOMIC_COUNTER_BUFFER, 0, sizeof(GLuint), &pixel_counter_[pose_nr]);
-//            int test = pixel_counter_[pose_nr];
-//            std::cout << "atomic counter for pose " << pose_nr << ": " << test << std::endl;
-//            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, 0);
-
-
-
+            glEndQuery(GL_SAMPLES_PASSED);
         }
     }
 
@@ -455,6 +449,18 @@ void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > s
     glEndQuery(GL_TIME_ELAPSED);
     store_time_measurements();
 #endif
+
+    for (int i = 0; i < nr_poses_; i++) {
+        GLint available = 0;
+
+        while (!available) {
+            glGetQueryObjectiv(pixel_count_[i], GL_QUERY_RESULT_AVAILABLE, &available);
+        }
+        GLuint pixel_count_CPU;
+        glGetQueryObjectuiv(pixel_count_[i], GL_QUERY_RESULT, &pixel_count_CPU);
+        std::cout << "pixel count for pose " << i << ": " << pixel_count_CPU << std::endl;
+    }
+
 
 }
 
@@ -550,7 +556,9 @@ vector<vector<float> > ObjectRasterizer::get_depth_values(int nr_poses) {
             for (int col = 0; (col < pixels_per_row) && (row * pixels_per_row  + col < test); col++) {
                 int pixel_index = row * pixels_per_row  + col;
 
-//                depth_image[pixel_index] = pixel_depth[inverted_row * pixels_per_row + col];
+                depth_image[pixel_index] = pixel_depth[inverted_row * pixels_per_row + col];
+                if (depth_image[pixel_index] != 0)
+                    std::cout << "depth[" << pixel_index << ": " << depth_image[pixel_index] << std::endl;
             }
         }
 
@@ -570,10 +578,22 @@ vector<vector<float> > ObjectRasterizer::get_depth_values(int nr_poses) {
 
                         depth_image_per_pose[pose_nr][local_pixel_nr]
                             = depth_image[global_pixel_nr];
+
+
                     }
                 }
             }
         }
+
+
+        for (int i = 0; i < nr_poses_; i++) {
+            int counter = 0;
+            for (int j = 0; j < nr_rows_ * nr_cols_; j++) {
+                if (depth_image_per_pose[i][j] >= 0.00001) counter++;
+            }
+            std::cout << "counter for pose " << i << ": " << counter << std::endl;
+        }
+
 
 
     } else {
@@ -620,6 +640,9 @@ void ObjectRasterizer::get_memory_need_parameters(int nr_rows, int nr_cols,
 
 
 void ObjectRasterizer::reallocate_buffers() {
+
+    pixel_count_.resize(max_nr_poses_);
+    glGenQueries(max_nr_poses_, &pixel_count_[0]);
 
     // ======================= REALLOCATE PBO ======================= //
 
