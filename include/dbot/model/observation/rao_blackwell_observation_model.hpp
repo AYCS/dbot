@@ -11,6 +11,16 @@
  * file distributed with this source code.
  */
 
+/*
+ * This file implements a part of the algorithm published in:
+ *
+ * M. Wuthrich, P. Pastor, M. Kalakrishnan, J. Bohg, and S. Schaal.
+ * Probabilistic Object Tracking using a Range Camera
+ * IEEE Intl Conf on Intelligent Robots and Systems, 2013
+ * http://arxiv.org/abs/1505.00241
+ *
+ */
+
 /**
  * \file rao_blackwell_observation_model.hpp
  * \author Manuel Wuthrich (manuel.wuthrich@gmail.com)
@@ -52,6 +62,14 @@ public:
     virtual RealArray loglikes(const StateArray& deviations,
                                IntArray& indices,
                                const bool& update = false) = 0;
+
+    // compute the loglikelihoods without keeping track of the occulsions
+    virtual RealArray loglikes(const StateArray& deviations)
+    {
+        reset();
+        IntArray zero_indices = IntArray::Zero(deviations.size());
+        return loglikes(deviations, zero_indices, false);
+    }
 
     /// accessors **************************************************************
     virtual void set_observation(const Observation& image) = 0;
