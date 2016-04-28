@@ -243,6 +243,55 @@ __global__ void evaluate_kernel(float *observations, float* old_occlusion_probs,
 
 }
 
+__global__ void copy_back_kernel(int* prefix_sum, float* depth_value, float* intersect_index,
+                                 int* count,
+                                 int n_poses, int n_rows, int n_cols, unsigned int n_pixels) {
+
+    int block_id = blockIdx.x + blockIdx.y * gridDim.x;
+    if (block_id < n_poses) {
+        __shared__ unsigned int count_nonzero_pixels;
+        if (threadIdx.x == 0) count_nonzero_pixels = 0;
+        __syncthreads();
+
+        int pixel_nr = threadIdx.x;
+        // OpenGL contructs the texture so that the left lower edge is (0,0), but our observations texture
+        // has its (0,0) in the upper left corner, so we need to reverse the reads from the OpenGL texture.
+        float texture_array_index_x = blockIdx.x * n_cols + pixel_nr % n_cols;
+        float texture_array_index_y = gridDim.y * n_rows - 1 - (blockIdx.y * n_rows + __fdividef(pixel_nr, n_cols));
+
+        int global_start = prefix_sum[block_id];
+        int index, global_index;
+        float depth;
+
+        while (pixel_nr < n_pixels ) {
+
+            depth = tex2D(texture_reference, texture_array_index_x, texture_array_index_y);
+
+            if (depth != 0) {
+                index = atomicInc(&count_nonzero_pixels, n_pixels);
+                global_index = global_start + index;
+
+                depth_value[global_index] = depth;
+                intersect_index[global_index] = pixel_nr;
+            }
+
+            pixel_nr += blockDim.x;
+            texture_array_index_x = blockIdx.x * n_cols + pixel_nr % n_cols;
+            texture_array_index_y = gridDim.y * n_rows - (blockIdx.y * n_rows + (pixel_nr / n_cols) + 1);
+        }
+
+        __syncthreads();
+
+        if (threadIdx.x == 0) {
+            count[block_id] = count_nonzero_pixels;
+        }
+
+    } else {
+        __syncthreads();
+    }
+
+}
+
 
 
 
@@ -302,6 +351,10 @@ CudaEvaluator::CudaEvaluator(const int nr_rows,
     d_observations_ = NULL;
     d_log_likelihoods_ = NULL;
     d_occlusion_indices_ = NULL;
+    d_prefix_sum_ = NULL;
+    d_depth_values_ = NULL;
+    d_intersect_indices_ = NULL;
+    d_nonzero_counters_ = NULL;
 
     set_nr_threads(DEFAULT_NR_THREADS);
 }
@@ -401,12 +454,12 @@ void CudaEvaluator::weigh_poses(const bool update_occlusions, vector<float> &log
         evaluate_kernel <<< grid_dimension_, nr_threads_ >>> (d_observations_, d_occlusion_probs_, d_occlusion_probs_copy_, d_occlusion_indices_, nr_cols_ * nr_rows_,
                                                d_log_likelihoods_, delta_time, nr_poses_, nr_rows_, nr_cols_, update_occlusions);
         #ifdef DEBUG
-            check_cuda_error("compare kernel call");
+            check_cuda_error("weighting kernel call");
         #endif
 
         cudaDeviceSynchronize();
         #ifdef DEBUG
-            check_cuda_error("cudaDeviceSynchronize compare_multiple");
+            check_cuda_error("cudaDeviceSynchronize weigh_poses");
         #endif
 
         // switch to new / copied occlusion probabilities
@@ -437,7 +490,52 @@ void CudaEvaluator::weigh_poses(const bool update_occlusions, vector<float> &log
 
 
 
+void CudaEvaluator::copy_back_values(std::vector<int> prefix_sum, int max_size_nonzero,
+                                     std::vector<float> &depth_values, std::vector<float> &intersect_indices,
+                                     std::vector<int> &nonzero_counters) {
 
+    cudaMemcpy(&d_prefix_sum_[0], &prefix_sum[0], nr_poses_ * sizeof(int), cudaMemcpyHostToDevice);
+    #ifdef DEBUG
+        check_cuda_error("cudaMemcpy prefix_sum -> d_prefix_sum_");
+    #endif
+
+    cudaMemset(d_nonzero_counters_, 0, sizeof(int) * nr_poses_);
+    cudaMemset(d_depth_values_, 0, sizeof(float) * max_size_nonzero);
+    cudaMemset(d_intersect_indices_, 0, sizeof(float) * max_size_nonzero);
+    #ifdef DEBUG
+        check_cuda_error("cudaMemset d_depth values and d_intersect_indices");
+    #endif
+
+    int nr_pixels = nr_rows_ * nr_cols_;
+
+    copy_back_kernel <<< grid_dimension_, nr_threads_ >>> (d_prefix_sum_, d_depth_values_, d_intersect_indices_,
+                                     d_nonzero_counters_,
+                                     nr_poses_, nr_rows_, nr_cols_, nr_pixels);
+
+    #ifdef DEBUG
+        check_cuda_error("copy values kernel call");
+    #endif
+
+    cudaDeviceSynchronize();
+    #ifdef DEBUG
+        check_cuda_error("cudaDeviceSynchronize copy_back_values");
+    #endif
+
+    cudaMemcpy(&depth_values[0], d_depth_values_, max_size_nonzero * sizeof(float), cudaMemcpyDeviceToHost);
+    #ifdef DEBUG
+        check_cuda_error("cudaMemcpy d_depth_values_ -> depth_value");
+    #endif
+
+    cudaMemcpy(&intersect_indices[0], d_intersect_indices_, max_size_nonzero * sizeof(float), cudaMemcpyDeviceToHost);
+    #ifdef DEBUG
+        check_cuda_error("cudaMemcpy d_intersect_indices_ -> intersect_index");
+    #endif
+
+    cudaMemcpy(&nonzero_counters[0], d_nonzero_counters_, nr_poses_ * sizeof(int), cudaMemcpyDeviceToHost);
+    #ifdef DEBUG
+        check_cuda_error("cudaMemcpy d_nonzero_counters_ -> nonzero_counters");
+    #endif
+}
 
 
 // ===================================================================================== //
@@ -596,6 +694,10 @@ void CudaEvaluator::allocate_memory_for_max_poses(int nr_poses,
         allocate(d_occlusion_probs_copy_, occlusion_probs_size_ * sizeof(float));
         observations_size_ = nr_rows_ * nr_cols_;
         allocate(d_observations_, observations_size_ * sizeof(float));
+        allocate(d_prefix_sum_, max_nr_poses_ * sizeof(int));
+        allocate(d_nonzero_counters_, max_nr_poses_ * sizeof(int));
+        allocate(d_depth_values_, sizeof(float) * occlusion_probs_size_);
+        allocate(d_intersect_indices_, sizeof(float) * occlusion_probs_size_);
 
         vector<float> initial_occlusion_probs (nr_rows_ * nr_cols_ * max_nr_poses_,
                                                occlusion_prob_default_);

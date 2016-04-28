@@ -56,7 +56,7 @@ ObjectRasterizer::ObjectRasterizer(const std::vector<std::vector<Eigen::Vector3f
     };
     int context_attribs[] = {
            GLX_CONTEXT_MAJOR_VERSION_ARB, 4,
-           GLX_CONTEXT_MINOR_VERSION_ARB, 2,
+           GLX_CONTEXT_MINOR_VERSION_ARB, 3,
            None
     };
 
@@ -131,6 +131,8 @@ ObjectRasterizer::ObjectRasterizer(const std::vector<std::vector<Eigen::Vector3f
         exit(EXIT_FAILURE);
     }
     check_GL_errors("GLEW init");
+
+    std::cout << "Using GLEW Version: " << glewGetString(GLEW_VERSION);
 
 
 
@@ -260,10 +262,57 @@ ObjectRasterizer::ObjectRasterizer(const std::vector<std::vector<Eigen::Vector3f
     // Create and compile our GLSL program from the shaders
     shader_ID_ = LoadShaders(shader_provider);
 
-
     // Set up handles for uniforms
     model_view_matrix_ID_ = glGetUniformLocation(shader_ID_, "MV");
     projection_matrix_ID_ = glGetUniformLocation(shader_ID_, "P");
+
+    // Create and compile compute shader
+    GLuint compute_shader = glCreateShader(GL_COMPUTE_SHADER);
+
+    std::string compute_shader_code;
+
+    std::ifstream shader_stream("/Network/Servers/cezanne/Volumes/cezanne/cpfreundt/data_transfer_compute_shader.computeShader", std::ios::in);
+
+    std::string line = "";
+    while (std::getline(shader_stream, line))
+    {
+        if (!compute_shader_code.empty()) compute_shader_code += "\n";
+        compute_shader_code += line;
+    }
+    shader_stream.close();
+
+
+    const char* compute_shader_source = compute_shader_code.c_str();
+
+    glShaderSource(compute_shader, 1, &compute_shader_source, NULL);
+    glCompileShader(compute_shader);
+
+    GLint status;
+    glGetShaderiv(compute_shader, GL_COMPILE_STATUS, &status);
+    if (status == GL_FALSE)
+    {
+        GLint infoLogLength;
+        glGetShaderiv(compute_shader, GL_INFO_LOG_LENGTH, &infoLogLength);
+
+        GLchar* strInfoLog = new GLchar[infoLogLength + 1];
+        glGetShaderInfoLog(compute_shader, infoLogLength, NULL, strInfoLog);
+
+        const char* strShaderType = NULL;
+        strShaderType = "compute";
+
+        fprintf(stderr,
+                "Compile failure in %s shader:\n%s\n",
+                strShaderType,
+                strInfoLog);
+        delete[] strInfoLog;
+    }
+
+
+    data_transfer_program_ID_ = glCreateProgram();
+    glAttachShader(data_transfer_program_ID_, compute_shader);
+    glLinkProgram(data_transfer_program_ID_);
+    glDetachShader(data_transfer_program_ID_, compute_shader);
+
 
     /* The view matrix is constant throughout this class since we are not changing the camera position.
        If you are looking to pass a different camera matrix for each render call, move this function
@@ -324,9 +373,99 @@ ObjectRasterizer::ObjectRasterizer(const std::vector<std::vector<Eigen::Vector3f
 void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > states,
                               std::vector<std::vector<float> >& depth_values) {
     render(states);
+
+//    prefix_sum_[0] = 0.0f;
+//    GLint available = 0;
+
+//    while (!available) {
+//        glGetQueryObjectiv(pixel_count_query_[0], GL_QUERY_RESULT_AVAILABLE, &available);
+//    }
+
+//    glGetQueryObjectuiv(pixel_count_query_[0], GL_QUERY_RESULT, &pixel_count_[0]);
+
+
+//    for (int i = 1; i < nr_poses_; i++) {
+//        available = 0;
+
+//        while (!available) {
+//            glGetQueryObjectiv(pixel_count_query_[i], GL_QUERY_RESULT_AVAILABLE, &available);
+//        }
+
+//        glGetQueryObjectuiv(pixel_count_query_[i], GL_QUERY_RESULT, &pixel_count_[i]);
+//        prefix_sum_[i] = prefix_sum_[i - 1] + pixel_count_[i - 1];
+//    }
+
+//    int total_size_depth_data = prefix_sum_[nr_poses_ - 1] + pixel_count_[nr_poses_ - 1];
+
+
+//    glActiveTexture(GL_TEXTURE0);
+//    glBindTexture(GL_TEXTURE_2D, framebuffer_texture_for_all_poses_);
+
+//    GLuint in_out_buffer;
+
+//    glGenBuffers(1, &in_out_buffer);
+
+//    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, in_out_buffer);
+
+
+//    glBufferData(GL_SHADER_STORAGE_BUFFER, (nr_poses_ + 2 * total_size_depth_data) * sizeof(GLfloat), NULL, GL_STREAM_COPY);
+//    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, nr_poses_ * sizeof(GLfloat), &prefix_sum_[0]);
+
+
+//    glUseProgram(data_transfer_program_ID_); // Compute shader program.
+//    int current_nr_poses_per_col = (nr_poses_ / max_nr_poses_per_row_) + 1;
+////    glDispatchCompute(max_nr_poses_per_row_, current_nr_poses_per_col, 1);
+
+//    GLfloat *depth_data;
+//    depth_data = (GLfloat *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, nr_poses_ * sizeof(GLfloat), 2 * total_size_depth_data * sizeof(GLfloat), GL_MAP_READ_BIT);
+
+//    for (int i = 0; i < nr_poses_; i++) {
+//        for (int j = 2 * prefix_sum_[i]; j < 2 * (prefix_sum_[i] + pixel_count_[i]); j += 2) {
+//            std::cout << "pose " << i << ":" << std::endl;
+//            std::cout << "depth " << j << " : " << depth_data[j] << std::endl;
+//            std::cout << "intersect index " << j << " : " << depth_data[j + 1] << std::endl;
+//        }
+
+//    }
+
+//    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
+
     depth_values = get_depth_values(states.size());
+
+//    glBindTexture(GL_TEXTURE_2D, 0);
+//    glUseProgram(shader_ID_); // return back to rendering program
 }
 
+
+void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > states,
+                              std::vector<int> &prefix_sum, int &max_size_nonzero) {
+
+    render(states);
+
+    prefix_sum[0] = 0.0f;
+    GLint available = 0;
+
+    while (!available) {
+        glGetQueryObjectiv(pixel_count_query_[0], GL_QUERY_RESULT_AVAILABLE, &available);
+    }
+
+    glGetQueryObjectuiv(pixel_count_query_[0], GL_QUERY_RESULT, &pixel_count_[0]);
+
+
+    for (int i = 1; i < nr_poses_; i++) {
+        available = 0;
+
+        while (!available) {
+            glGetQueryObjectiv(pixel_count_query_[i], GL_QUERY_RESULT_AVAILABLE, &available);
+        }
+
+        glGetQueryObjectuiv(pixel_count_query_[i], GL_QUERY_RESULT, &pixel_count_[i]);
+        prefix_sum[i] = prefix_sum[i - 1] + pixel_count_[i - 1];
+    }
+
+    max_size_nonzero = prefix_sum[nr_poses_ - 1] + pixel_count_[nr_poses_ - 1];
+}
 
 void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > states) {
 
@@ -379,21 +518,23 @@ void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > s
         for (int j = 0; j < max_nr_poses_per_row_ && i * max_nr_poses_per_row_ + j < nr_poses_; j++) {
 
             int pose_nr = max_nr_poses_per_row_ * i + j;
-            glBeginQuery(GL_SAMPLES_PASSED, pixel_count_[pose_nr]);
 
             // reset atomic counter
-            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomic_counters_buffer_);
-            GLuint a[1] = {0};
-            glBufferSubData(GL_ATOMIC_COUNTER_BUFFER, 0 , sizeof(GLuint), a);
-            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, 0);
+//            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomic_counters_buffer_);
+//            GLuint a[1] = {0};
+//            glBufferSubData(GL_ATOMIC_COUNTER_BUFFER, 0 , sizeof(GLuint), a);
+//            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, 0);
 
-            glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER, 0, atomic_counters_buffer_);
+//            glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER, 0, atomic_counters_buffer_);
 
 
             glViewport(j * nr_cols_, (nr_poses_per_col - 1 - i) * nr_rows_, nr_cols_, nr_rows_);
             #ifdef DEBUG
                 check_GL_errors("setting the viewport");
             #endif
+
+            glBeginQuery(GL_SAMPLES_PASSED, pixel_count_query_[pose_nr]);
+
             for (size_t k = 0; k < object_numbers_.size(); k++) {
                 int index = object_numbers_[k];
 
@@ -406,22 +547,22 @@ void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > s
                 #endif
             }
 
-
-            GLuint *userCounters;
-            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomic_counters_buffer_);
-            // again we map the buffer to userCounters, but this time for read-only access
-            userCounters = (GLuint*)glMapBufferRange(GL_ATOMIC_COUNTER_BUFFER,
-                                                     0,
-                                                     sizeof(GLuint) ,
-                                                     GL_MAP_READ_BIT
-                                                    );
-            // copy the values to other variables because...
-            int test = userCounters[0];
-            std::cout << "atomic counter for pose " << pose_nr << ": " << test << std::endl;
-
-            glUnmapBuffer(GL_ATOMIC_COUNTER_BUFFER);
-
             glEndQuery(GL_SAMPLES_PASSED);
+
+//            GLuint *userCounters;
+//            glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, atomic_counters_buffer_);
+//            // again we map the buffer to userCounters, but this time for read-only access
+//            userCounters = (GLuint*)glMapBufferRange(GL_ATOMIC_COUNTER_BUFFER,
+//                                                     0,
+//                                                     sizeof(GLuint) ,
+//                                                     GL_MAP_READ_BIT
+//                                                    );
+//            // copy the values to other variables because...
+//            int test = userCounters[0];
+//            std::cout << "atomic counter for pose " << pose_nr << ": " << test << std::endl;
+
+//            glUnmapBuffer(GL_ATOMIC_COUNTER_BUFFER);
+
         }
     }
 
@@ -447,17 +588,6 @@ void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > s
     glEndQuery(GL_TIME_ELAPSED);
     store_time_measurements();
 #endif
-
-    for (int i = 0; i < nr_poses_; i++) {
-        GLint available = 0;
-
-        while (!available) {
-            glGetQueryObjectiv(pixel_count_[i], GL_QUERY_RESULT_AVAILABLE, &available);
-        }
-        GLuint pixel_count_CPU;
-        glGetQueryObjectuiv(pixel_count_[i], GL_QUERY_RESULT, &pixel_count_CPU);
-        std::cout << "pixel count for pose " << i << ": " << pixel_count_CPU << std::endl;
-    }
 
 
 }
@@ -540,23 +670,34 @@ vector<vector<float> > ObjectRasterizer::get_depth_values(int nr_poses) {
     if (pixel_depth != (GLfloat*) NULL) {
         int current_nr_poses_per_col = (nr_poses / max_nr_poses_per_row_) + 1;
         int total_nr_pixels = nr_rows_ * nr_cols_ * max_nr_poses_per_row_ * current_nr_poses_per_col;
-        int test = total_nr_pixels / 16.0f;
-        vector<float> depth_image(total_nr_pixels, numeric_limits<float>::max());
+        vector<float> depth_image(total_nr_pixels, numeric_limits<float>::max());   // why max? should this not be zero?
 
         int pixels_per_row = max_nr_poses_per_row_ * nr_cols_;
         int pixels_per_col = current_nr_poses_per_col * nr_rows_;
         int highest_pixel_per_col = pixels_per_col - 1;
 
+
+        std::cout << "current_nr_poses_per_col:" << current_nr_poses_per_col << std::endl
+                  << "total_nr_pixels:" << total_nr_pixels << std::endl
+                     << "pixels_per_row:" << pixels_per_row << std::endl
+                        << "pixels_per_col:" << pixels_per_col << std::endl
+                           << "highest_pixel_per_col:" << highest_pixel_per_col << std::endl;
+
+
         // reading OpenGL texture into an array on the CPU (inverted rows)
         for (int row = 0; row < pixels_per_col; row++) {
             int inverted_row = highest_pixel_per_col - row;
 
-            for (int col = 0; (col < pixels_per_row) && (row * pixels_per_row  + col < test); col++) {
+            for (int col = 0; (col < pixels_per_row) && (row * pixels_per_row  + col < total_nr_pixels); col++) {
                 int pixel_index = row * pixels_per_row  + col;
 
+//                std::cout << "texture pixel: " << inverted_row * pixels_per_row + col << std::endl;
+
                 depth_image[pixel_index] = pixel_depth[inverted_row * pixels_per_row + col];
-                if (depth_image[pixel_index] != 0)
-                    std::cout << "depth[" << pixel_index << ": " << depth_image[pixel_index] << std::endl;
+                if (depth_image[pixel_index] != 0) {
+//                    std::cout << "depth[" << pixel_index << "]: " << depth_image[pixel_index] << std::endl;
+                }
+
             }
         }
 
@@ -577,6 +718,10 @@ vector<vector<float> > ObjectRasterizer::get_depth_values(int nr_poses) {
                         depth_image_per_pose[pose_nr][local_pixel_nr]
                             = depth_image[global_pixel_nr];
 
+//                        std::cout << "pose_nr:" << pose_nr << std::endl
+//                                  << "local_pixel_nr:" << local_pixel_nr << std::endl
+//                                     << "global_pixel_nr:" << global_pixel_nr << std::endl;
+
 
                     }
                 }
@@ -584,13 +729,6 @@ vector<vector<float> > ObjectRasterizer::get_depth_values(int nr_poses) {
         }
 
 
-        for (int i = 0; i < nr_poses_; i++) {
-            int counter = 0;
-            for (int j = 0; j < nr_rows_ * nr_cols_; j++) {
-                if (depth_image_per_pose[i][j] >= 0.00001) counter++;
-            }
-            std::cout << "counter for pose " << i << ": " << counter << std::endl;
-        }
 
 
 
@@ -639,8 +777,10 @@ void ObjectRasterizer::get_memory_need_parameters(int nr_rows, int nr_cols,
 
 void ObjectRasterizer::reallocate_buffers() {
 
+    pixel_count_query_.resize(max_nr_poses_);
     pixel_count_.resize(max_nr_poses_);
-    glGenQueries(max_nr_poses_, &pixel_count_[0]);
+    prefix_sum_.resize(max_nr_poses_);
+    glGenQueries(max_nr_poses_, &pixel_count_query_[0]);
 
     // ======================= REALLOCATE PBO ======================= //
 

@@ -120,6 +120,12 @@ public:
     void weigh_poses(const bool update_occlusions,
                      std::vector<float>& log_likelihoods);
 
+
+    void copy_back_values(std::vector<int> prefix_sum, int max_size_nonzero,
+                                         std::vector<float> &depth_values,
+                                         std::vector<float> &intersect_indices,
+                                std::vector<int> &nonzero_counters);
+
     // setters
 
     /**
@@ -266,6 +272,10 @@ private:
                                 // the occlusion probabilities array, which
                                 // contains the occlusion probabilities for that
                                 // particular pose.
+    int* d_prefix_sum_;
+    float *d_depth_values_;
+    float *d_intersect_indices_;
+    int *d_nonzero_counters_;
 
     int occlusion_probs_size_;
     int observations_size_;

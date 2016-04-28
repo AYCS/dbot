@@ -389,8 +389,12 @@ public:
         store_time(CONVERTING_STATE_FORMAT);
 #endif
 
-        std::vector<std::vector<float> > depth_values;
-        opengl_->render(poses, depth_values);
+        std::vector<std::vector<float> > depth_values_old;
+        opengl_->render(poses, depth_values_old);
+
+        std::vector<int> prefix_sum (nr_poses_, 0);
+        int max_size_nonzero = 0;
+        opengl_->render(poses, prefix_sum, max_size_nonzero);
 
 
 #ifdef PROFILING_ACTIVE
@@ -431,7 +435,50 @@ public:
             }
         }
 
-        cuda_->weigh_poses(update_occlusions, flog_likelihoods);
+//        cuda_->weigh_poses(update_occlusions, flog_likelihoods);
+
+        std::vector<float> depth_values (max_size_nonzero, 0);
+        std::vector<float> intersect_indices (max_size_nonzero, 0);
+        std::vector<int> nonzero_counters (nr_poses_, 0);
+
+        cuda_->copy_back_values(prefix_sum, max_size_nonzero,
+                                depth_values, intersect_indices,
+                                nonzero_counters);
+
+        for (int i = 0; i < nr_poses_ - 1; i++) {
+//            std::cout << "prefix_sum: " << prefix_sum[i] << ", nr values: " << prefix_sum[i+1] - prefix_sum[i] << std::endl;
+
+            int counter = 0;
+            for (int j = 0; j < nr_rows_ * nr_cols_; j++) {
+                if (depth_values_old[i][j] != 0) {
+                    counter++;
+                }
+            }
+            if (counter != nonzero_counters[i])
+                std::cout << "OpenGL != 0: " << counter << ", CUDA != 0: " << nonzero_counters[i] << std::endl;
+            if (counter > prefix_sum[i+1] - prefix_sum[i])
+                std::cout << "counter zu gross: " << counter << ", samples passed: " << prefix_sum[i+1] - prefix_sum[i] << std::endl;
+
+//            for (int j = prefix_sum[i]; j < prefix_sum[i+1]; j++) {
+////                std::cout << "depth " << j << " : " << depth_values[j] << std::endl;
+////                std::cout << "intersect index " << j << " : " << intersect_indices[j] << std::endl;
+//                int pose_start = i * nr_rows_ * nr_cols_;
+
+//                if (depth_values_old[i][intersect_indices[j]] != depth_values[j]) {
+//                    std::cout << "DIFF: ";
+//                }
+//                if (depth_values_old[i][intersect_indices[j]] != depth_values[j]) {
+//                        std::cout << "pose: " << i << ", row: " << ((int) intersect_indices[j]) / nr_cols_
+//                                  << ", col: " << ((int) intersect_indices[j]) % nr_cols_
+//                                  << ", depth OpenGL: " << depth_values_old[i][intersect_indices[j]]
+//                                  << ", depth CUDA: " << depth_values[j]
+//                                  << ", index: " << j - prefix_sum[i] << std::endl;
+
+//                }
+//            }
+
+        }
+        if (count_ == 1) exit(-1);
 
         if (optimize_nr_threads_)
         {

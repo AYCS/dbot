@@ -80,6 +80,9 @@ public:
     void render(const std::vector<std::vector<Eigen::Matrix4f> > states,
                 std::vector<std::vector<float> >& depth_values);
 
+    void render(const std::vector<std::vector<Eigen::Matrix4f> > states,
+                                  std::vector<int> &prefix_sum, int &max_size_nonzero);
+
     /**
      * \brief render the objects in all given states into a texture that can then be accessed by CUDA.
      * This function renders all poses (of all objects) into one large texture, which can then be mapped into the CUDA
@@ -201,6 +204,9 @@ private:
     GLuint model_view_matrix_ID_;    // ID to which we pass the modelview matrix
     GLuint projection_matrix_ID_;    // ID to which we pass the projection matrix
 
+    // compute shader program ID
+    GLuint data_transfer_program_ID_;
+
 
     // VAO, VBO and element arrays are needed to store the object meshes
     GLuint vertex_array_;   // The vertex array contains the vertex and index buffers
@@ -209,7 +215,9 @@ private:
 
     // PBO for copying results to CPU for debugging
     GLuint result_buffer_;
+    std::vector<GLuint> pixel_count_query_;
     std::vector<GLuint> pixel_count_;
+    std::vector<float> prefix_sum_;
 
     // buffer for atomic counters
     GLuint atomic_counters_buffer_;

@@ -28,14 +28,12 @@ DefaultShaderProvider::DefaultShaderProvider()
     : SimpleShaderProvider(
           /* fragment shader */
           "#version 430 core                                                \n"
-          "layout (binding = 0) uniform atomic_uint nr_pixels;  \n"
           "                                                                 \n"
           "in float depth;                                                  \n"
           "layout (location = 0) out float log_likelihood;                  \n"
           "                                                                 \n"
           "void main() {                                                    \n"
           "   log_likelihood = -depth;                                      \n"
-          "   atomicCounterIncrement(nr_pixels);   \n"
           "}                                                                \n",
           /* vertex shader */
           "#version 430                                                     \n"
