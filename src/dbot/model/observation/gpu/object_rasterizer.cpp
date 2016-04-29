@@ -132,9 +132,6 @@ ObjectRasterizer::ObjectRasterizer(const std::vector<std::vector<Eigen::Vector3f
     }
     check_GL_errors("GLEW init");
 
-    std::cout << "Using GLEW Version: " << glewGetString(GLEW_VERSION);
-
-
 
 
     // ======================== SET OPENGL OPTIONS ======================== //
@@ -307,7 +304,102 @@ void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > s
 void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > states,
                               std::vector<int> &prefix_sum, int &max_size_nonzero) {
 
-    render(states);
+    nr_poses_ = states.size();
+    if (nr_poses_ > max_nr_poses_) {
+        std::cout << "ERROR (OPENGL): You tried to evaluate more poses ("
+                  << nr_poses_ << ") than specified by max_poses ("
+                  << max_nr_poses_ << ")." << std::endl;
+        exit(-1);
+    }
+
+    int nr_poses_per_col = ceil(nr_poses_ / (float) max_nr_poses_per_row_);
+
+#ifdef PROFILING_ACTIVE
+    glBeginQuery(GL_TIME_ELAPSED, time_query_[ATTACH_TEXTURE]);
+    nr_calls_++;
+#endif
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER,        // 1. fbo target: GL_FRAMEBUFFER
+                           GL_COLOR_ATTACHMENT0,  // 2. attachment point
+                           GL_TEXTURE_2D,         // 3. tex target: GL_TEXTURE_2D
+                           framebuffer_texture_for_all_poses_,     // 4. tex ID
+                           0);
+#ifdef DEBUG
+    check_GL_errors("attaching texture to framebuffer");
+#endif
+#ifdef PROFILING_ACTIVE
+    glFinish();
+    glEndQuery(GL_TIME_ELAPSED);
+    glBeginQuery(GL_TIME_ELAPSED, time_query_[CLEAR_SCREEN]);
+#endif
+
+    glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
+
+#ifdef DEBUG
+    check_GL_errors("clearing framebuffer");
+#endif
+#ifdef PROFILING_ACTIVE
+    glFinish();
+    glEndQuery(GL_TIME_ELAPSED);
+    glBeginQuery(GL_TIME_ELAPSED, time_query_[RENDER]);
+#endif
+
+    glUniformMatrix4fv(projection_matrix_ID_, 1, GL_FALSE, projection_matrix_.data());
+
+    Matrix4f model_view_matrix;
+
+
+    for (int i = 0; i < nr_poses_per_col ; i++) {
+        for (int j = 0; j < max_nr_poses_per_row_ && i * max_nr_poses_per_row_ + j < nr_poses_; j++) {
+
+            int pose_nr = max_nr_poses_per_row_ * i + j;
+
+            glViewport(j * nr_cols_, (nr_poses_per_col - 1 - i) * nr_rows_, nr_cols_, nr_rows_);
+            #ifdef DEBUG
+                check_GL_errors("setting the viewport");
+            #endif
+
+            glBeginQuery(GL_SAMPLES_PASSED, pixel_count_query_[pose_nr]);
+
+            for (size_t k = 0; k < object_numbers_.size(); k++) {
+                int index = object_numbers_[k];
+
+                model_view_matrix = view_matrix_ * states[pose_nr][index];
+                glUniformMatrix4fv(model_view_matrix_ID_, 1, GL_FALSE, model_view_matrix.data());
+
+                glDrawElements(GL_TRIANGLES, indices_per_object_[index], GL_UNSIGNED_INT, (void*) (start_position_[index] * sizeof(uint)));
+                #ifdef DEBUG
+                    check_GL_errors("render call");
+                #endif
+            }
+
+            glEndQuery(GL_SAMPLES_PASSED);
+        }
+    }
+
+
+#ifdef PROFILING_ACTIVE
+    glFinish();
+    glEndQuery(GL_TIME_ELAPSED);
+    glBeginQuery(GL_TIME_ELAPSED, time_query_[DETACH_TEXTURE]);
+#endif
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER,        // 1. fbo target: GL_FRAMEBUFFER
+                           GL_COLOR_ATTACHMENT0,  // 2. attachment point
+                           GL_TEXTURE_2D,         // 3. tex target: GL_TEXTURE_2D
+                           0,     // 4. tex ID
+                           0);
+
+#ifdef DEBUG
+    check_GL_errors("detaching texture from framebuffer");
+#endif
+
+#ifdef PROFILING_ACTIVE
+    glFinish();
+    glEndQuery(GL_TIME_ELAPSED);
+    store_time_measurements();
+#endif
+
 
     prefix_sum[0] = 0.0f;
     GLint available = 0;
@@ -390,8 +482,6 @@ void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > s
                 check_GL_errors("setting the viewport");
             #endif
 
-            glBeginQuery(GL_SAMPLES_PASSED, pixel_count_query_[pose_nr]);
-
             for (size_t k = 0; k < object_numbers_.size(); k++) {
                 int index = object_numbers_[k];
 
@@ -403,8 +493,6 @@ void ObjectRasterizer::render(const std::vector<std::vector<Eigen::Matrix4f> > s
                     check_GL_errors("render call");
                 #endif
             }
-
-            glEndQuery(GL_SAMPLES_PASSED);
         }
     }
 
@@ -736,15 +824,18 @@ string ObjectRasterizer::get_text_for_enum( int enumVal ) {
 
 
 void ObjectRasterizer::check_GL_errors(const char *label) {
+
     GLenum errCode;
     const GLubyte *errStr;
     if ((errCode = glGetError()) != GL_NO_ERROR) {
-        errStr = gluErrorString(errCode);
-        printf("OpenGL ERROR: ");
-        printf("%s", (char*)errStr);
-        printf("(Label: ");
-        printf("%s", label);
-        printf(")\n.");
+        if (label != "GLEW init") {
+            errStr = gluErrorString(errCode);
+            printf("OpenGL ERROR: ");
+            printf("%s", (char*)errStr);
+            printf("(Label: ");
+            printf("%s", label);
+            printf(")\n.");
+        }
     }
 }
 

@@ -281,6 +281,8 @@ public:
         strings_for_subtasks_[RENDERING] = "Rendering step";
         strings_for_subtasks_[MAPPING] =
             "Mapping the texture from OpenGL to CUDA";
+        strings_for_subtasks_[READ_BACK_CUDA] =
+                "Reading back depth values through CUDA";
         strings_for_subtasks_[WEIGHTING] = "Weighting step";
         strings_for_subtasks_[UNMAPPING] =
             "Unmapping the texture and reconverting the likelihoods";
@@ -389,17 +391,7 @@ public:
         store_time(CONVERTING_STATE_FORMAT);
 #endif
 
-        std::vector<std::vector<float> > depth_values_old;
-        opengl_->render(poses, depth_values_old);
-
-#ifdef PROFILING_ACTIVE
-        store_time(READ_BACK_OPENGL);
-#endif
-
-
-        std::vector<int> prefix_sum (nr_poses_, 0);
-        int max_size_nonzero = 0;
-        opengl_->render(poses, prefix_sum, max_size_nonzero);
+        opengl_->render(poses);
 
 
 #ifdef PROFILING_ACTIVE
@@ -440,65 +432,7 @@ public:
             }
         }
 
-//        cuda_->weigh_poses(update_occlusions, flog_likelihoods);
-
-        std::vector<float> depth_values (max_size_nonzero, 0);
-        std::vector<int> intersect_indices (max_size_nonzero, 0);
-        std::vector<int> nonzero_counters (nr_poses_, 0);
-
-        cuda_->copy_back_values(prefix_sum, max_size_nonzero,
-                                depth_values, intersect_indices,
-                                nonzero_counters);
-
-#ifdef PROFILING_ACTIVE
-        store_time(READ_BACK_CUDA);
-#endif
-
-
-        for (int i = 0; i < nr_poses_ - 1; i++) {
-            if (prefix_sum[i+1] - prefix_sum[i] < nonzero_counters[i]) {
-                std::cout << "CUDA: more nonzero values than we have room for" << std::endl;
-            }
-//            std::cout << "prefix_sum: " << prefix_sum[i] << ", nr values: " << prefix_sum[i+1] - prefix_sum[i] << std::endl;
-
-            int counter = 0;
-            for (int j = 0; j < nr_rows_ * nr_cols_; j++) {
-                if (depth_values_old[i][j] != 0) {
-                    counter++;
-                }
-            }
-            if (counter != nonzero_counters[i])
-                std::cout << "OpenGL != 0: " << counter << ", CUDA != 0: " << nonzero_counters[i] << std::endl;
-
-            for (int j = prefix_sum[i]; j < prefix_sum[i] + nonzero_counters[i]; j++) {
-//                std::cout << "depth " << j << " : " << depth_values[j] << std::endl;
-//                std::cout << "intersect index " << j << " : " << intersect_indices[j] << std::endl;
-
-                if (depth_values_old[i][intersect_indices[j]] != depth_values[j]) {
-
-
-
-                    std::cout << "DIFF: pose: " << i << ", intersect index: " << intersect_indices[j]
-                                  << ", row: " <<  (intersect_indices[j] / nr_cols_)
-                                  << ", col: " << (intersect_indices[j]) % nr_cols_
-                                  << ", depth OpenGL: " << depth_values_old[i][intersect_indices[j]]
-                                  << ", depth CUDA: " << depth_values[j]
-                                  << ", index: " << j - prefix_sum[i];
-
-                    for (int k = 0; k < nr_rows_ * nr_cols_; k++) {
-                        if (depth_values[j] == depth_values_old[i][k]) {
-                            std::cout << ", found at: " << k << std::endl;
-                        }
-                    }
-                    std::cout << std::endl;
-
-
-                }
-            }
-
-        }
-
-
+        cuda_->weigh_poses(update_occlusions, flog_likelihoods);
 
         if (optimize_nr_threads_)
         {
@@ -549,6 +483,136 @@ public:
         count_++;
         return log_likelihoods;
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    /**
+     * \brief renders the poses on the GPU and returns the nonzero depth values
+     * and their according pixel number.
+     * \param [in] deltas the states which should be evaluated
+     * \param [out] depth_values the depth values of the rendered pixels
+     * \param [out] pixel_ids the corresponding pixel number in the respective image
+     * \param [out] max_nonzero_pixels the maximum number of nonzero pixels estimated
+     * by OpenGL
+     * \param [out] nonzero_pixel_count the actual number of nonzero pixels delivered
+     * by CUDA
+     */
+    void get_depth_values(const StateArray& deltas,
+                       std::vector<float> &depth_values,
+                       std::vector<int> &pixel_ids,
+                       std::vector<int> &max_nonzero_pixels,
+                       std::vector<int> &nonzero_pixel_count)
+    {
+#ifdef PROFILING_ACTIVE
+    time_before_ = dbot::hf::get_wall_time();
+#endif
+
+        nr_poses_ = deltas.size();
+
+        int tmp_nr_poses;
+        if (bufferConfig_->set_nr_of_poses(nr_poses_, tmp_nr_poses)) {
+            nr_poses_ = tmp_nr_poses;
+        } else {
+            exit(-1);
+        }
+
+        int nr_objects = vertices_.size();
+
+        std::vector<std::vector<Eigen::Matrix4f>> poses(
+            nr_poses_, std::vector<Eigen::Matrix4f>(nr_objects));
+
+        for (size_t i_state = 0; i_state < size_t(nr_poses_); i_state++)
+        {
+            for (size_t i_obj = 0; i_obj < nr_objects; i_obj++)
+            {
+                auto pose_0 = this->default_poses_.component(i_obj);
+                auto delta = deltas[i_state].component(i_obj);
+
+                osr::PoseVector pose;
+
+                pose.orientation() = delta.orientation() * pose_0.orientation();
+                pose.position() = delta.position() + pose_0.position();
+
+                poses[i_state][i_obj] = pose.homogeneous().cast<float>();
+            }
+        }
+
+#ifdef PROFILING_ACTIVE
+        store_time(CONVERTING_STATE_FORMAT);
+#endif
+
+        std::vector<int> prefix_sum (nr_poses_, 0);
+        int max_size_nonzero = 0;
+
+        opengl_->render(poses, prefix_sum, max_size_nonzero);
+
+        max_nonzero_pixels.resize(nr_poses_, 0);
+        for (int i = 0; i < nr_poses_ - 1; i++) {
+            max_nonzero_pixels[i] = prefix_sum[i+1] - prefix_sum[i];
+        }
+        max_nonzero_pixels[nr_poses_ - 1] = max_size_nonzero - prefix_sum[nr_poses_ - 1];
+
+#ifdef PROFILING_ACTIVE
+        store_time(RENDERING);
+#endif
+
+        cudaGraphicsMapResources(1, &texture_resource_, 0);
+        cudaGraphicsSubResourceGetMappedArray(
+            &texture_array_, texture_resource_, 0, 0);
+        cuda_->map_texture_to_texture_array(texture_array_);
+
+#ifdef PROFILING_ACTIVE
+        store_time(MAPPING);
+#endif
+
+
+        depth_values.resize(max_size_nonzero, 0);
+        pixel_ids.resize(max_size_nonzero, 0);
+        nonzero_pixel_count.resize(nr_poses_, 0);
+
+        cuda_->copy_back_values(prefix_sum, max_size_nonzero,
+                                depth_values, pixel_ids,
+                                nonzero_pixel_count);
+
+
+
+#ifdef PROFILING_ACTIVE
+        store_time(READ_BACK_CUDA);
+#endif
+
+        cudaGraphicsUnmapResources(1, &texture_resource_, 0);
+
+#ifdef PROFILING_ACTIVE
+        store_time(UNMAPPING);
+#endif
+
+        count_++;
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     /**
      * \brief Sets the observation image that should be used for comparison in the
@@ -805,14 +869,13 @@ private:
     bool observations_set_, resource_registered_;
 
     // used for time observations
-    static const int NR_SUBTASKS_TO_MEASURE = 8;
+    static const int NR_SUBTASKS_TO_MEASURE = 7;
     enum subtasks_to_measure
     {
         SET_OCCLUSION_INDICES,
         CONVERTING_STATE_FORMAT,
         RENDERING,
         MAPPING,
-        READ_BACK_OPENGL,
         READ_BACK_CUDA,
         WEIGHTING,
         UNMAPPING
