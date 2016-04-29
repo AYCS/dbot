@@ -504,9 +504,9 @@ public:
      * \param [out] depth_values the depth values of the rendered pixels
      * \param [out] pixel_ids the corresponding pixel number in the respective image
      * \param [out] max_nonzero_pixels the maximum number of nonzero pixels estimated
-     * by OpenGL
+     * by OpenGL per pose
      * \param [out] nonzero_pixel_count the actual number of nonzero pixels delivered
-     * by CUDA
+     * by CUDA per pose
      */
     void get_depth_values(const StateArray& deltas,
                        std::vector<float> &depth_values,
@@ -742,11 +742,13 @@ public:
 
             for (int i = 0; i < NR_SUBTASKS_TO_MEASURE; i++)
             {
-                std::cout << strings_for_subtasks_[i] << ": \t"
-                          << time_[i] / count_ << " s \t "
-                          << std::setprecision(1)
-                          << time_[i] / count_ * 100 / total_time_per_evaluation
-                          << " %" << std::setprecision(9) << std::endl;
+                if (time_[i] != 0) {
+                    std::cout << strings_for_subtasks_[i] << ": \t"
+                              << time_[i] / count_ << " s \t "
+                              << std::setprecision(1)
+                              << time_[i] / count_ * 100 / total_time_per_evaluation
+                              << " %" << std::setprecision(9) << std::endl;
+                }
             }
             std::cout << "Total time per evaluation call: "
                       << total_time_per_evaluation << std::endl;
