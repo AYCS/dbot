@@ -511,7 +511,7 @@ void CudaEvaluator::copy_back_values(std::vector<int> prefix_sum, int max_size_n
 
     int nr_pixels = nr_rows_ * nr_cols_;
 
-    copy_back_kernel <<< grid_dimension_, 4 >>> (d_prefix_sum_, d_depth_values_, d_intersect_indices_,
+    copy_back_kernel <<< grid_dimension_, nr_threads_ >>> (d_prefix_sum_, d_depth_values_, d_intersect_indices_,
                                      d_nonzero_counters_,
                                      nr_poses_, nr_rows_, nr_cols_, nr_pixels);
 
