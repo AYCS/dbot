@@ -122,9 +122,8 @@ public:
 
 
     void copy_back_values(std::vector<int> prefix_sum, int max_size_nonzero,
-                                         std::vector<float> &depth_values,
-                                         std::vector<float> &intersect_indices,
-                                std::vector<int> &nonzero_counters);
+                                         std::vector<float> &depth_values, std::vector<int> &intersect_indices,
+                                         std::vector<int> &nonzero_counters);
 
     // setters
 
@@ -274,7 +273,7 @@ private:
                                 // particular pose.
     int* d_prefix_sum_;
     float *d_depth_values_;
-    float *d_intersect_indices_;
+    int *d_intersect_indices_;
     int *d_nonzero_counters_;
 
     int occlusion_probs_size_;

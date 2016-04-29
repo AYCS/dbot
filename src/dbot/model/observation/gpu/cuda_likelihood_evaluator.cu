@@ -156,8 +156,9 @@ __global__ void evaluate_kernel(float *observations, float* old_occlusion_probs,
         // OpenGL contructs the texture so that the left lower edge is (0,0), but our observations texture
         // has its (0,0) in the upper left corner, so we need to reverse the reads from the OpenGL texture.
         float texture_array_index_x = blockIdx.x * n_cols + pixel_nr % n_cols;
-
-        float texture_array_index_y = gridDim.y * n_rows - 1 - (blockIdx.y * n_rows + __fdividef(pixel_nr, n_cols));
+        // probably an error in this next line:
+//        float texture_array_index_y = gridDim.y * n_rows - 1 - (blockIdx.y * n_rows + __fdividef(pixel_nr, n_cols));
+        float texture_array_index_y = gridDim.y * n_rows - (blockIdx.y * n_rows + (pixel_nr / n_cols) + 1);
 
         float depth;
         float observed_depth;
@@ -243,21 +244,26 @@ __global__ void evaluate_kernel(float *observations, float* old_occlusion_probs,
 
 }
 
-__global__ void copy_back_kernel(int* prefix_sum, float* depth_value, float* intersect_index,
+__global__ void copy_back_kernel(int* prefix_sum, float* depth_value, int* intersect_index,
                                  int* count,
-                                 int n_poses, int n_rows, int n_cols, unsigned int n_pixels) {
+                                 int n_poses, int n_rows, int n_cols, int n_pixels) {
 
-    int block_id = blockIdx.x + blockIdx.y * gridDim.x;
+    int block_id = blockIdx.x + blockIdx.y * gridDim.x;       
+
     if (block_id < n_poses) {
-        __shared__ unsigned int count_nonzero_pixels;
-        if (threadIdx.x == 0) count_nonzero_pixels = 0;
+
+        __shared__ int count_nonzero_pixels;
+        if (threadIdx.x == 0) {
+            count_nonzero_pixels = 0;
+        }
         __syncthreads();
+
 
         int pixel_nr = threadIdx.x;
         // OpenGL contructs the texture so that the left lower edge is (0,0), but our observations texture
         // has its (0,0) in the upper left corner, so we need to reverse the reads from the OpenGL texture.
         float texture_array_index_x = blockIdx.x * n_cols + pixel_nr % n_cols;
-        float texture_array_index_y = gridDim.y * n_rows - 1 - (blockIdx.y * n_rows + __fdividef(pixel_nr, n_cols));
+        float texture_array_index_y = gridDim.y * n_rows - (blockIdx.y * n_rows + (pixel_nr / n_cols) + 1);
 
         int global_start = prefix_sum[block_id];
         int index, global_index;
@@ -268,7 +274,7 @@ __global__ void copy_back_kernel(int* prefix_sum, float* depth_value, float* int
             depth = tex2D(texture_reference, texture_array_index_x, texture_array_index_y);
 
             if (depth != 0) {
-                index = atomicInc(&count_nonzero_pixels, n_pixels);
+                index = atomicAdd(&count_nonzero_pixels, 1);
                 global_index = global_start + index;
 
                 depth_value[global_index] = depth;
@@ -286,10 +292,7 @@ __global__ void copy_back_kernel(int* prefix_sum, float* depth_value, float* int
             count[block_id] = count_nonzero_pixels;
         }
 
-    } else {
-        __syncthreads();
     }
-
 }
 
 
@@ -491,7 +494,7 @@ void CudaEvaluator::weigh_poses(const bool update_occlusions, vector<float> &log
 
 
 void CudaEvaluator::copy_back_values(std::vector<int> prefix_sum, int max_size_nonzero,
-                                     std::vector<float> &depth_values, std::vector<float> &intersect_indices,
+                                     std::vector<float> &depth_values, std::vector<int> &intersect_indices,
                                      std::vector<int> &nonzero_counters) {
 
     cudaMemcpy(&d_prefix_sum_[0], &prefix_sum[0], nr_poses_ * sizeof(int), cudaMemcpyHostToDevice);
@@ -501,14 +504,14 @@ void CudaEvaluator::copy_back_values(std::vector<int> prefix_sum, int max_size_n
 
     cudaMemset(d_nonzero_counters_, 0, sizeof(int) * nr_poses_);
     cudaMemset(d_depth_values_, 0, sizeof(float) * max_size_nonzero);
-    cudaMemset(d_intersect_indices_, 0, sizeof(float) * max_size_nonzero);
+    cudaMemset(d_intersect_indices_, 0, sizeof(int) * max_size_nonzero);
     #ifdef DEBUG
-        check_cuda_error("cudaMemset d_depth values and d_intersect_indices");
+        check_cuda_error("cudaMemset d_depth values, d_intersect_indices and d_nonzero_counters");
     #endif
 
     int nr_pixels = nr_rows_ * nr_cols_;
 
-    copy_back_kernel <<< grid_dimension_, nr_threads_ >>> (d_prefix_sum_, d_depth_values_, d_intersect_indices_,
+    copy_back_kernel <<< grid_dimension_, 4 >>> (d_prefix_sum_, d_depth_values_, d_intersect_indices_,
                                      d_nonzero_counters_,
                                      nr_poses_, nr_rows_, nr_cols_, nr_pixels);
 
@@ -526,7 +529,7 @@ void CudaEvaluator::copy_back_values(std::vector<int> prefix_sum, int max_size_n
         check_cuda_error("cudaMemcpy d_depth_values_ -> depth_value");
     #endif
 
-    cudaMemcpy(&intersect_indices[0], d_intersect_indices_, max_size_nonzero * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(&intersect_indices[0], d_intersect_indices_, max_size_nonzero * sizeof(int), cudaMemcpyDeviceToHost);
     #ifdef DEBUG
         check_cuda_error("cudaMemcpy d_intersect_indices_ -> intersect_index");
     #endif
@@ -697,7 +700,7 @@ void CudaEvaluator::allocate_memory_for_max_poses(int nr_poses,
         allocate(d_prefix_sum_, max_nr_poses_ * sizeof(int));
         allocate(d_nonzero_counters_, max_nr_poses_ * sizeof(int));
         allocate(d_depth_values_, sizeof(float) * occlusion_probs_size_);
-        allocate(d_intersect_indices_, sizeof(float) * occlusion_probs_size_);
+        allocate(d_intersect_indices_, sizeof(int) * occlusion_probs_size_);
 
         vector<float> initial_occlusion_probs (nr_rows_ * nr_cols_ * max_nr_poses_,
                                                occlusion_prob_default_);

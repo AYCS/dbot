@@ -80,6 +80,15 @@ public:
     void render(const std::vector<std::vector<Eigen::Matrix4f> > states,
                 std::vector<std::vector<float> >& depth_values);
 
+    /**
+     * \brief render the objects in all given states and return the depth for all pixels of each rendered object.
+     * This function renders all poses (of all objects) into one large texture. It provides a count of nonzero
+     * depth values per pose that can be used by CUDA to copy back the depth values efficiently to the CPU.
+     * \param [in]  states [pose_nr][object_nr][0 - 6] = {qw, qx, qy, qz, tx, ty, tz}. This should contain the quaternion
+     * and the translation for each object per pose.
+     * \param [out] prefix_sum [pose_nr] = {maximum number of nonzero values for this pose}
+     * \param [out] max_size_nonzero the accumulated number of nonzero values (for all poses)
+     */
     void render(const std::vector<std::vector<Eigen::Matrix4f> > states,
                                   std::vector<int> &prefix_sum, int &max_size_nonzero);
 
@@ -157,7 +166,6 @@ private:
     Display* dpy_;
     GLXContext ctx_;
 
-
     // GPU constraints
     GLint max_texture_size_;
 
@@ -215,13 +223,11 @@ private:
 
     // PBO for copying results to CPU for debugging
     GLuint result_buffer_;
+
+    // arrays for counting nonzero depth values
     std::vector<GLuint> pixel_count_query_;
     std::vector<GLuint> pixel_count_;
     std::vector<float> prefix_sum_;
-
-    // buffer for atomic counters
-    GLuint atomic_counters_buffer_;
-    std::vector<int> pixel_counter_;
 
     // custom framebuffer and its textures for depth (for z-testing) and color (which also represents depth in our case)
     GLuint framebuffer_;
